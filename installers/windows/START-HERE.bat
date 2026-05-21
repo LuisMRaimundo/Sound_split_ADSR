@@ -1,6 +1,4 @@
 @echo off
-setlocal EnableExtensions
-title Sound Split ADSR
 cd /d "%~dp0"
 call "%~dp0INSTALL.bat"
 exit /b %ERRORLEVEL%

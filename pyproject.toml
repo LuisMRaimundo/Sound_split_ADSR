@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sound-split-adsr"
+version = "3.1.0"
+description = "ADSR audio segment splitter for orchestral one-shots (GUI, CLI, benchmark)"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Luís Raimundo", email = "lmr.2020@outlook.pt" }]
+dependencies = [
+    "librosa>=0.10.0",
+    "numpy>=1.23.0",
+    "soundfile>=0.12.0",
+    "matplotlib>=3.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[project.scripts]
+sound-split-adsr-gui = "split_audio_segments:main"
+sound-split-adsr-cli = "split_audio_cli:main"
+sound-split-adsr-benchmark = "run_benchmark:main"
+
+[tool.setuptools]
+py-modules = [
+    "audio_segment_core",
+    "split_audio_segments",
+    "split_audio_cli",
+    "run_benchmark",
+]
+
+[tool.setuptools.packages.find]
+include = ["benchmark*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

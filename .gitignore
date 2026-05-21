@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test / lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Autonomous installer runtime (downloaded Python + packages)
+installers/runtime/
+
+# Generated benchmark audio (regenerate with run_benchmark.py --generate-corpus)
+benchmark/corpus/*.wav
+benchmark/results/
+
+# Local logs / temp
+*.log
+*.tmp

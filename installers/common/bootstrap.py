@@ -9,15 +9,18 @@ from __future__ import annotations
 
 import argparse
 import os
-import platform
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
 import urllib.request
-import zipfile
 from pathlib import Path
+
+# Embedded/portable Python may not put this folder on sys.path before imports run.
+_COMMON_DIR = Path(__file__).resolve().parent
+if str(_COMMON_DIR) not in sys.path:
+    sys.path.insert(0, str(_COMMON_DIR))
 
 from config import (
     APP_MODULE,
@@ -29,10 +32,10 @@ from config import (
     platform_key,
     runtime_python_dir,
     runtime_python_exe,
-    windows_embed_zip_url,
 )
 
 GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
+STAMP_VERSION = "2"
 
 
 def _log(msg: str) -> None:
@@ -50,50 +53,59 @@ def _run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None 
     subprocess.run(cmd, cwd=cwd or PROJECT_ROOT, env=env, check=True)
 
 
-def _setup_windows_embed() -> Path:
-    py_exe = runtime_python_exe("windows")
-    if py_exe.is_file():
-        return py_exe
+def _tkinter_available(py: Path) -> bool:
+    try:
+        subprocess.run(
+            [str(py), "-c", "import tkinter"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            check=True,
+        )
+        return True
+    except subprocess.CalledProcessError:
+        return False
 
-    runtime_dir = runtime_python_dir("windows")
-    if runtime_dir.exists():
-        shutil.rmtree(runtime_dir)
 
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        zip_path = tmp_path / "python-embed.zip"
-        _download(windows_embed_zip_url(), zip_path)
-        runtime_dir.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(zip_path) as zf:
-            zf.extractall(runtime_dir)
+def _pip_available(py: Path) -> bool:
+    try:
+        subprocess.run(
+            [str(py), "-m", "pip", "--version"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            check=True,
+        )
+        return True
+    except subprocess.CalledProcessError:
+        return False
 
-        get_pip = runtime_dir / "get-pip.py"
+
+def _ensure_pip(py: Path, runtime_dir: Path) -> None:
+    if _pip_available(py):
+        return
+    get_pip = runtime_dir / "get-pip.py"
+    if not get_pip.is_file():
         _download(GET_PIP_URL, get_pip)
-
-        pth_files = list(runtime_dir.glob("python*._pth"))
-        if pth_files:
-            text = pth_files[0].read_text(encoding="utf-8")
-            if "import site" not in text:
-                lines = [ln for ln in text.splitlines() if ln.strip() != "#import site"]
-                if not any(ln.strip() == "import site" for ln in lines):
-                    lines.append("import site")
-                pth_files[0].write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-        py_exe = runtime_python_exe("windows")
-        _run([str(py_exe), str(get_pip)])
-        return py_exe
+    _log("Installing pip into portable Python …")
+    _run([str(py), str(get_pip)])
+    if not _pip_available(py):
+        raise RuntimeError("pip could not be installed in portable Python")
 
 
 def _setup_pbs(platform_name: str) -> Path:
     py_exe = runtime_python_exe(platform_name)
-    if py_exe.is_file():
+    runtime_dir = runtime_python_dir(platform_name)
+
+    if py_exe.is_file() and _tkinter_available(py_exe):
+        if platform_name == "windows":
+            _ensure_pip(py_exe, runtime_dir)
         return py_exe
+
+    if runtime_dir.exists():
+        shutil.rmtree(runtime_dir)
 
     arch = machine_key()
     url = pbs_download_url(platform_name, arch)
-    runtime_dir = runtime_python_dir(platform_name)
-    if runtime_dir.exists():
-        shutil.rmtree(runtime_dir)
+    _log(f"Setting up portable Python for {platform_name} (includes Tkinter) …")
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
@@ -102,10 +114,17 @@ def _setup_pbs(platform_name: str) -> Path:
         with tarfile.open(archive, "r:gz") as tf:
             tf.extractall(tmp_path)
         extracted = next(p for p in tmp_path.iterdir() if p.is_dir() and p.name.startswith("python"))
+        runtime_dir.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(extracted), str(runtime_dir))
 
     if not py_exe.is_file():
         raise RuntimeError(f"Portable Python not found after extract: {py_exe}")
+    if not _tkinter_available(py_exe):
+        raise RuntimeError(
+            "Portable Python was installed but Tkinter is missing. "
+            "Delete installers/runtime/ and run again."
+        )
+    _ensure_pip(py_exe, runtime_dir)
     return py_exe
 
 
@@ -113,11 +132,16 @@ def ensure_portable_python() -> Path:
     plat = platform_key()
     existing = runtime_python_exe(plat)
     if existing.is_file():
-        return existing
+        if _tkinter_available(existing):
+            if plat == "windows":
+                _ensure_pip(existing, runtime_python_dir("windows"))
+            return existing
+        _log("Current portable Python cannot open the GUI (no Tkinter).")
+        _log("Downloading a full Python runtime (one-time, ~50 MB) …")
+        if STAMP_FILE.is_file():
+            STAMP_FILE.unlink(missing_ok=True)
 
     _log(f"No bundled Python yet — setting up portable runtime for {plat} …")
-    if plat == "windows":
-        return _setup_windows_embed()
     return _setup_pbs(plat)
 
 
@@ -131,18 +155,32 @@ def ensure_app_installed(py: Path) -> None:
 
     _log("Installing Sound Split ADSR and dependencies (first run may take several minutes) …")
     _run([str(py), "-m", "pip", "install", "--upgrade", "pip", "wheel", "setuptools"])
-    _run([str(py), "-m", "pip", "install", "-e", str(PROJECT_ROOT)])
+    _run(
+        [str(py), "-m", "pip", "install", "-e", str(PROJECT_ROOT)],
+        env={**os.environ, "PIP_NO_WARN_SCRIPT_LOCATION": "1"},
+    )
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     STAMP_FILE.write_text(_stamp_payload(), encoding="utf-8")
     _log("Install complete.")
 
 
 def _stamp_payload() -> str:
+    plat = platform_key()
     pyproject = PROJECT_ROOT / "pyproject.toml"
-    return f"v=1\nroot={PROJECT_ROOT.resolve()}\npyproject={pyproject.stat().st_mtime_ns if pyproject.is_file() else 0}\n"
+    py_exe = runtime_python_exe(plat)
+    return (
+        f"v={STAMP_VERSION}\n"
+        f"runtime={py_exe.resolve()}\n"
+        f"root={PROJECT_ROOT.resolve()}\n"
+        f"pyproject={pyproject.stat().st_mtime_ns if pyproject.is_file() else 0}\n"
+    )
 
 
 def launch_gui(py: Path) -> int:
+    if not _tkinter_available(py):
+        _log("ERROR: This Python build has no Tkinter — the GUI cannot start.")
+        _log("Delete installers/runtime/ and run run.bat again.")
+        return 1
     env = os.environ.copy()
     env["PYTHONPATH"] = str(PROJECT_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
     _log("Starting Sound Split ADSR (Tkinter window).")
@@ -164,10 +202,17 @@ def cmd_launch(_: argparse.Namespace) -> int:
 
 
 def cmd_doctor(_: argparse.Namespace) -> int:
+    plat = platform_key()
+    py = runtime_python_exe(plat)
     _log(f"Project root: {PROJECT_ROOT}")
-    _log(f"Platform: {platform_key()} / {machine_key()}")
-    py = runtime_python_exe(platform_key())
+    _log(f"Platform: {plat} / {machine_key()}")
     _log(f"Portable Python: {py} ({'found' if py.is_file() else 'missing'})")
+    if py.is_file():
+        _log(f"Tkinter: {'ok' if _tkinter_available(py) else 'MISSING'}")
+        _log(f"pip: {'ok' if _pip_available(py) else 'missing'}")
+    legacy = RUNTIME_DIR / "windows" / "python" / "python.exe"
+    if legacy.is_file() and legacy != py:
+        _log(f"Legacy embed Python (no Tkinter): {legacy} — safe to delete")
     _log(f"Install stamp: {STAMP_FILE} ({'ok' if STAMP_FILE.is_file() else 'missing'})")
     _log(f"App: {APP_MODULE} ({'found' if APP_MODULE.is_file() else 'missing'})")
     return 0
@@ -192,7 +237,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
     if len(sys.argv) == 1:
         sys.argv.append("launch")
     raise SystemExit(main())

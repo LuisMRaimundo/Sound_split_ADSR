@@ -1,5 +1,7 @@
 # Autonomous installers (no Python required)
 
+**Already have Python 3.10+?** Use **`run.bat`** at the repository root (Windows) or `python split_audio_segments.py` — no download needed.
+
 These launchers install a **private copy** of Python and all app libraries on **first run**, then open the **Sound Split ADSR** desktop window. You do **not** need Python, pip, or conda on your computer.
 
 **Requirements:** Internet on first run (~150–250 MB download). Disk space ~500 MB after install. Windows 10/11, macOS 11+, or a recent Linux (x86_64 or arm64).
@@ -86,8 +88,8 @@ python installers/common/bootstrap.py doctor
 
 ## For maintainers
 
-- **Windows** uses the official **embeddable** CPython zip from python.org (first run may use system `py` launcher if present).
-- **macOS / Linux** use **python-build-standalone** install-only tarballs (no compiler, no root).
+- **All platforms** use **python-build-standalone** install-only tarballs (includes **Tkinter**; no compiler, no root).
+- **Windows** runtime lives in `installers/runtime/windows/python-full/` (legacy embed zip in `.../python/` had no Tkinter — safe to delete).
 - After portable Python exists, `installers/common/bootstrap.py` runs `pip install -e .` and launches `split_audio_segments.py`.
 
 Do not commit `installers/runtime/` to git (see `.gitignore`).

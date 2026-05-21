@@ -4,6 +4,8 @@ title Sound Split ADSR
 
 cd /d "%~dp0\..\.."
 set "ROOT=%CD%"
+set "BOOT=%ROOT%\installers\common\bootstrap.py"
+set "PORTABLE=%ROOT%\installers\runtime\windows\python-full\python.exe"
 
 echo.
 echo  Sound Split ADSR
@@ -11,21 +13,21 @@ echo  ================
 echo.
 
 where python >nul 2>&1
-if %ERRORLEVEL%==0 (
-    for /f "delims=" %%P in ('where python 2^>nul ^| findstr /i "WindowsApps"') do set "SKIP=1"
+if !ERRORLEVEL! equ 0 (
+    set "SKIP="
+    for /f "delims=" %%P in ('where python 2^>nul') do (
+        echo %%P | findstr /i "WindowsApps" >nul && set "SKIP=1"
+    )
     if not defined SKIP (
-        python "%ROOT%\installers\common\bootstrap.py" launch
+        python "%BOOT%" launch
         goto :done
     )
 )
 
-set "PY=%ROOT%\installers\runtime\windows\python\python.exe"
-set "BOOT=%ROOT%\installers\common\bootstrap.py"
-
-if not exist "%PY%" (
-    echo First-time setup: downloading portable Python...
+if not exist "%PORTABLE%" (
+    echo First-time setup: downloading portable Python ^(includes Tkinter^)...
     where py >nul 2>&1
-    if %ERRORLEVEL%==0 (
+    if !ERRORLEVEL! equ 0 (
         py -3 "%BOOT%" launch
         goto :done
     )
@@ -35,7 +37,7 @@ if not exist "%PY%" (
     exit /b 1
 )
 
-"%PY%" "%BOOT%" launch
+"%PORTABLE%" "%BOOT%" launch
 
 :done
 if errorlevel 1 pause

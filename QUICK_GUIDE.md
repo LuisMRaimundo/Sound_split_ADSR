@@ -4,9 +4,11 @@ For users who want to split instrument one-shots without reading the full techni
 
 ## 1. Install and open
 
-**Easiest:** use the one-click installer for your system (see [installers/README.md](../installers/README.md)).
+**Windows (Python already installed):** double-click **`run.bat`** in the project folder.
 
-**Already have Python 3.10+:**
+**No Python on this PC:** use the one-click installer ([installers/README.md](../installers/README.md)).
+
+**Manual install (Python 3.10+):**
 
 ```bash
 pip install -e .

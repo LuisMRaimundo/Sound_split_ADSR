@@ -24,6 +24,8 @@ First run downloads a private Python and libraries (~150–250 MB), then opens t
 
 ## Developers (Python already installed)
 
+**Windows:** double-click **`run.bat`** in the project folder (runs `split_audio_segments.py`).
+
 ```bash
 pip install -e ".[dev]"
 python split_audio_segments.py          # GUI
@@ -31,6 +33,8 @@ python split_audio_cli.py -f ./samples  # headless batch
 python run_benchmark.py --generate-corpus && python run_benchmark.py
 pytest
 ```
+
+Entry points after install: `sound-split-adsr-gui`, `sound-split-adsr-cli`, `sound-split-adsr-benchmark`.
 
 **MP3/M4A:** install [ffmpeg](https://ffmpeg.org/) on your PATH.
 
@@ -55,6 +59,7 @@ Detection modes: **smart** (energy + proportional anchors, default), **advanced*
 | Document | Description |
 |----------|-------------|
 | [QUICK_GUIDE.md](QUICK_GUIDE.md) | Non-specialist workflow |
+| [run.bat](run.bat) | Windows launcher (Python already installed) |
 | [docs/TECHNICAL_MANUAL.md](docs/TECHNICAL_MANUAL.md) | Full DSP specification, API, tutorials |
 | [installers/README.md](installers/README.md) | Autonomous installers (Windows / macOS / Linux) |
 | [# Copyright and Use Notice.md](#%20Copyright%20and%20Use%20Notice.md) | Proprietary terms |

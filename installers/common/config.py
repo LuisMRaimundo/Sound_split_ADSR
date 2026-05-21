@@ -58,14 +58,10 @@ def pbs_download_url(platform_name: str, arch: str) -> str:
     )
 
 
-def windows_embed_zip_url() -> str:
-    return (
-        f"https://www.python.org/ftp/python/{PYTHON_VERSION}/"
-        f"python-{PYTHON_VERSION}-embed-amd64.zip"
-    )
-
-
 def runtime_python_dir(platform_name: str) -> Path:
+    # Windows: full PBS install (includes Tkinter). Legacy embed used .../python/ (no Tkinter).
+    if platform_name == "windows":
+        return RUNTIME_DIR / platform_name / "python-full"
     return RUNTIME_DIR / platform_name / "python"
 
 

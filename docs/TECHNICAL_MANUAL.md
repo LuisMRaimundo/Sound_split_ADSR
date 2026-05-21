@@ -1,4 +1,4 @@
-# SPLIT Audio Segments — Technical Documentation
+# Sound Split ADSR — Technical Documentation
 
 **Version:** 3.1 (Optimized Audio Segment Splitter)  
 **Audience:** Acoustics researchers, sound designers, and software engineers  
@@ -437,6 +437,10 @@ parts, idx_att, idx_dec, idx_end = core.extract_and_fade_segments(
 | `find_zero_crossing(y, idx, sr, search_ms)` | `int` | Nearest ZC sample index |
 | `apply_fades(audio, sr, fade_ms, fade_type)` | `np.ndarray` | Edge ramps |
 | `parse_note_hz_from_filename(path)` | `float \| None` | Expected F0 from name |
+| `SegmentConfig.from_preset(name, **overrides)` | `SegmentConfig` | Preset + optional field overrides |
+| `list_audio_files(folder)` | `List[Path]` | Non-recursive audio file list |
+| `process_audio_file(path, out_dir, cfg, …)` | `dict` | Detect, extract, write one file + metadata dict |
+| `batch_process_folder(folder, cfg, …)` | `List[dict]` | Batch wrapper over `process_audio_file` |
 
 ### 10.3 Validation rules
 
@@ -452,10 +456,11 @@ parts, idx_att, idx_dec, idx_end = core.extract_and_fade_segments(
 
 ### 11.1 Launch
 
+**Windows (recommended if Python is installed):** double-click **`run.bat`** in the project root.
+
 **GUI:**
 ```bash
-cd "C:\...\SPLIT_audio_segments"
-pip install -r requirements.txt
+pip install -r requirements.txt   # or: pip install -e .
 python split_audio_segments.py
 ```
 
@@ -463,7 +468,10 @@ python split_audio_segments.py
 ```bash
 python split_audio_cli.py --folder "D:/Samples/Violin" --preset "Legato / Bow" --export-metadata
 python split_audio_cli.py --folder . --preset "Staccato / Pluck" --advanced --fade-ms 25
+python split_audio_cli.py -f ./samples --pitch-refine-mode annotate --export-metadata
 ```
+
+**CLI flags:** `--preset`, `--fade-ms`, `--fade-type`, `--attack-threshold`, `--decay-threshold`, `--min-sustain`, `--advanced`, `--proportional`, `--no-vibrato-robust`, `--no-pitch-refine`, `--pitch-refine-mode` (`expand` | `annotate` | `crop`), `--export-metadata`, `--output`.
 
 **Windows note:** MP3/M4A require a working **ffmpeg** install on PATH for librosa/audioread.
 
@@ -471,14 +479,14 @@ python split_audio_cli.py --folder . --preset "Staccato / Pluck" --advanced --fa
 
 1. **Source Folder** — directory containing audio files (outputs written beside inputs).
 2. **Preset Configuration** — choose duration class; optionally **Auto-Detect Mean Length** or set **Mean Sound Length** manually; **Apply Preset**.
-3. **Segmentation Parameters** — thresholds, fades, Smart/Advanced, pitch controls, optional thread pool.
+3. **Segmentation Parameters** — thresholds, fades, Smart/Advanced, **Pitch Refine** (`expand` / `annotate` / `crop` / `off`), optional **Thread pool (parallel batch)**.
 4. **► RUN OPTIMIZED SPLIT** — batch process; progress bar and log.
 5. **Review Segmentation** — opens automatically; adjust boundaries per file.
 6. **Clear** — reset state for a new folder (does not delete output files).
 
 ### 11.3 Parallel processing
 
-**Parallel batch (experimental)** uses `ThreadPoolExecutor` (not separate processes) to avoid pickling the Tkinter app. Default is **sequential** for thread safety with GUI state.
+Optional **Thread pool (parallel batch)** uses `ThreadPoolExecutor` (threads share memory; not separate processes). Default is **off** (sequential) for predictable GUI logging. Enable for large folders on multi-core machines.
 
 ---
 
@@ -608,8 +616,8 @@ if result.pitch_refine.get("used"):
 ### Tutorial D — Running tests
 
 ```bash
-cd "C:\...\SPLIT_audio_segments"
-pytest tests/ -v
+cd "path/to/Sound Split ADSR"
+pytest
 ```
 
 Tests synthesize sine bursts with known attack/sustain/decay timing and assert boundary ordering and trim alignment.

@@ -99,4 +99,8 @@ This repository and its contents are proprietary research material. **No open-so
 
 ## Acknowledgements
 
-Developed with support from **FCT** and **Universidade NOVA de Lisboa** (DOI: [10.54499/2020.08817.BD](https://doi.org/10.54499/2020.08817.BD)). The author thanks **Isabel Pires** for her support.
+This project was developed by **Luís Raimundo** with the support and funding of the **Fundação para a Ciência e a Tecnologia (FCT)** and **Universidade NOVA de Lisboa**.
+
+**Funding DOI:** [https://doi.org/10.54499/2020.08817.BD](https://doi.org/10.54499/2020.08817.BD)
+
+The author also gratefully acknowledges **Isabel Pires** for her support throughout the development of this work.

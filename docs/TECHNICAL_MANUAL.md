@@ -23,6 +23,7 @@
 13. [Testing](#13-testing)
 14. [Troubleshooting](#14-troubleshooting)
 15. [Dependencies](#15-dependencies)
+16. [Boundary Benchmark](#16-boundary-benchmark)
 
 ---
 
@@ -78,8 +79,11 @@ Typical use cases:
 | `audio_segment_core.py` | All detection and extraction logic; safe to import from scripts or notebooks. |
 | `split_audio_segments.py` | Desktop app: parameters, batch run, manual review, JSON/CSV export. |
 | `split_audio_cli.py` | Headless batch CLI (no GUI): presets, metadata export, CI-friendly. |
+| `run_benchmark.py` | Boundary-error benchmark (synthetic corpus + custom labels). |
+| `benchmark/benchmark_core.py` | MAE metrics, annotation loading, aggregate reports. |
 | `tests/test_segment_detection.py` | Regression tests on synthetic sine bursts. |
 | `tests/test_advanced_features.py` | Vibrato, articulation presets, batch I/O, boundary accuracy. |
+| `tests/test_benchmark.py` | Benchmark framework smoke tests. |
 
 **Coordinate systems (important):**
 
@@ -205,7 +209,8 @@ Purely duration-based on `active_len`:
 5. **Blend:**  
    `t_att = 0.7 × energy_att + 0.3 × prop_att`  
    `t_dec = 0.7 × energy_dec + 0.3 × prop_dec`  
-6. `_clamp_segment_rel()` guarantees minimum sustain/decay.
+6. **Decay guard:** decay cannot start before ~75% through the proportional sustain zone (`sustain_fraction_before_decay`, default 0.75).
+7. `_clamp_segment_rel()` guarantees minimum sustain/decay.
 
 **Rationale:** Energy tracks the physical envelope; proportional terms prevent pathological placements on noisy or reversed dynamics.
 
@@ -237,34 +242,48 @@ These are **relative to the trimmed signal’s peak**, not absolute dBFS.
 
 ## 6. Pitch-Based Sustain Refinement
 
-After energy boundaries are set, `refine_sustain_by_pitch()` may **replace** `(t_att_rel, t_dec_rel)` with a shorter window inside the sustain region if pitch is sufficiently stable.
+After energy boundaries are set, `refine_sustain_by_pitch()` may adjust or annotate sustain boundaries depending on **`pitch_refine_mode`**.
 
-### 6.1 Algorithm
+### 6.1 Modes (`pitch_refine_mode`)
+
+| Mode | Export behaviour | Use case |
+|------|------------------|----------|
+| **`expand`** (default) | Finds best pitch-stable seed window, **grows outward** while stability holds; never shrinks below `pitch_refine_min_fraction` (default 70%) of energy-based sustain | Long bowed notes, general use |
+| **`annotate`** | Keeps **full energy-based sustain** in `_Sustains/`; records stable sub-window in metadata only | **STFT / spectral analysis** (long sustains preserved) |
+| **`crop`** | Exports only the tightest stable window (legacy sampler-style) | Tight sample-library cores |
+| **`off`** (`use_pitch_refine=False`) | Skips pitch refinement entirely | Noisy or unpitched material |
+
+If expand/crop would shrink sustain below `pitch_refine_min_fraction` of the energy region, boundaries **revert to energy-based** sustain (`kept_energy_boundaries: true` in metadata).
+
+### 6.2 Algorithm (shared)
 
 1. Extract sustain slice `y_trimmed[start:end]`.
 2. Estimate F0 with `librosa.yin()` (A0–C8 range, same `frame_length` / `hop_length`).
 3. Express each valid frame as **cents deviation from median F0**:  
    `cents = 1200 × log2(f0 / median_f0)`.
-4. Slide a window of length `max(pitch_window_duration, effective_min_sustain_duration)`.
-5. Score each window: `score = std(cents) + mean_abs_cents_from_note` (latter term only if note parsed from filename).
-6. If best `std(cents) ≤ pitch_stability_cents` (default **5¢**), set attack/decay boundaries to that window (in trim-relative time).
+4. Score sliding windows using **vibrato-robust** stability (`pitch_stability_std_cents`: linear detrend + moving-median residual when `vibrato_robust=True`).
+5. Seed window length uses `pitch_window_duration` as analysis grain (not necessarily export length in expand mode).
+6. In **expand** mode, grow seed left/right while σ stays within `pitch_stability_cents × 1.25`.
 
-### 6.2 Filename note parsing
+### 6.3 Filename note parsing
 
 `parse_note_hz_from_filename()` matches patterns like `Violin_A4_test.wav` → **440 Hz** via `librosa.note_to_hz()`.  
 Supports accidentals: `C#4`, `Bb3`, etc.
 
 When a note is known, windows closer to the expected pitch rank higher even if internal deviation is similar.
 
-### 6.3 Metadata fields (`pitch_refine` dict)
+### 6.4 Metadata fields (`pitch_refine` dict)
 
 | Field | Description |
 |-------|-------------|
-| `used` | Whether refinement changed boundaries |
+| `used` | Whether refinement applied (or annotated) a stable window |
 | `std_cents` | Pitch stability of chosen window |
 | `window_start`, `window_end` | Absolute file times (after offset) |
 | `expected_note_hz` | Parsed fundamental |
 | `mean_abs_cents_from_note` | Mean deviation from expected pitch |
+| `mode` | `expand`, `annotate`, or `crop` |
+| `energy_sustain_duration` | Energy-based sustain length before refinement |
+| `kept_energy_boundaries` | `true` if export kept full energy sustain |
 
 ---
 
@@ -279,7 +298,7 @@ Cuts are moved to nearest **sign-change** sample within `DEFAULT_ZERO_CROSSING_S
 | `fade_type` | Shape |
 |-------------|--------|
 | `cosine` (default) | Raised cosine in/out |
-| `hann` | Same implementation as cosine in code |
+| `hann` | Hann window fade (distinct from cosine) |
 | `linear` | Linear ramp |
 
 Fade length: `fade_ms` (default 50 ms), clamped to at least **50 ms** equivalent (`sr/20`) and at most **half** the segment length.
@@ -346,10 +365,17 @@ File name, sample rate, boundary times, segment durations, and pitch-refinement 
 | `frame_length` | 1024 | Analysis frame |
 | `hop_length` | 512 | Hop size |
 | `min_sustain_frames` | 40 | Frame-based minimum sustain |
+| `use_pitch_refine` | True | Enable pitch-based sustain refinement |
+| `pitch_refine_mode` | `"expand"` | `expand`, `annotate`, or `crop` |
+| `pitch_refine_min_fraction` | 0.70 | Min sustain vs energy region before revert |
+| `vibrato_robust` | True | Suppress vibrato in pitch stability scoring |
+| `vibrato_median_window_s` | 0.12 | Moving-median window for vibrato removal |
+| `remove_dc` | True | DC offset removal before analysis |
+| `sustain_fraction_before_decay` | 0.75 | Min % through proportional sustain before decay |
 
 `effective_min_sustain_duration()` returns the maximum of: `min_sustain_duration`, `pitch_window_duration`, frame-based minimum, and (for very short sounds) 25% of `active_len`.
 
-### 9.2 Built-in presets (`PRESETS`)
+### 9.2 Built-in presets (`PRESETS` + `ARTICULATION_PRESETS` → `ALL_PRESETS`)
 
 | Preset | Typical length | attack% | sustain% | decay% | fade ms | min sustain |
 |--------|----------------|---------|----------|--------|---------|-------------|
@@ -359,6 +385,13 @@ File name, sample rate, boundary times, segment durations, and pitch-refinement 
 | Long (3.0–6.0s) | 3–6 s | 0.10 | 0.70 | 0.20 | 60 | 0.60 s |
 | Very Long (> 6.0s) | > 6 s | 0.08 | 0.75 | 0.17 | 70 | 1.00 s |
 | Custom | user-defined | 0.15 | 0.60 | 0.25 | 50 | 0.35 s |
+| **Staccato / Pluck** | < 0.5 s | 0.22 | 0.45 | 0.33 | 25 | 0.04 s |
+| **Legato / Bow** | long | 0.10 | 0.72 | 0.18 | 55 | 0.45 s |
+| **Marcato / Accent** | short | 0.18 | 0.52 | 0.30 | 35 | 0.12 s |
+
+Articulation presets also set detection mode (e.g. Staccato → advanced; Legato → smart) and pitch tolerance. Long / Very Long presets use lower decay thresholds (0.45 / 0.40) and `pitch_refine_mode: expand` with min fraction 0.72–0.75.
+
+Build config from preset: `SegmentConfig.from_preset("Legato / Bow")`.
 
 GUI **Auto-Detect Mean Length** scans up to 100 files, trims each at 60 dB, averages active duration, and selects a matching preset.
 
@@ -564,9 +597,10 @@ if result.pitch_refine.get("used"):
 | Symptom | Suggested change |
 |---------|------------------|
 | Attack segment includes too much steady tone | Lower **Attack Threshold** (e.g. 0.85) or enable **Advanced Mode** |
-| Decay starts too early on long bows | Lower **Decay Threshold** (e.g. 0.40) or increase **Min Sustain** |
-| Very short plucks get empty sustain | Use **Very Short** preset; reduce `min_sustain_duration` to ~0.06 s |
-| Noisy recordings, unstable splits | Disable pitch refinement (set **Pitch Stability** very low is ineffective — instead set a large **Pitch Stability** value like 20¢ so refinement rarely applies) or use proportional-only: uncheck Smart and Advanced |
+| Decay starts too early on long bows | Lower **Decay Threshold** (e.g. 0.40), use **Very Long** preset, or set **Pitch Refine → annotate** |
+| Sustain too short for STFT (5–7 s notes) | Set **Pitch Refine → annotate** or **expand** (default); avoid **crop** |
+| Very short plucks get empty sustain | Use **Very Short** or **Staccato / Pluck** preset; reduce `min_sustain_duration` to ~0.06 s |
+| Noisy recordings, unstable splits | Set **Pitch Refine → off** or use proportional-only (uncheck Smart and Advanced) |
 | Envelope has multiple peaks | Manual review is required; consider pre-trimming files |
 
 ---
@@ -584,15 +618,22 @@ Tests synthesize sine bursts with known attack/sustain/decay timing and assert b
 
 ## 13. Testing
 
+**27 tests** across three modules (`pytest` from repository root):
+
+| Module | Examples |
+|--------|----------|
+| `test_segment_detection.py` | Trim, attack energy, smart ordering, short sounds, zero-crossing extract |
+| `test_advanced_features.py` | Vibrato robust scoring, Hann vs cosine, long-note sustain guard, annotate mode, batch I/O |
+| `test_benchmark.py` | Corpus generation, MAE aggregation, annotation template |
+
+Legacy single-file reference:
+
 | Test | Validates |
 |------|-----------|
 | `test_trim_active_region` | Trim shortens signal, positive active length |
-| `test_energy_attack_before_peak` | Attack time precedes RMS peak |
 | `test_detect_segments_smart_ordering` | `t_att < t_dec < t_end` |
-| `test_detect_segments_short_sound` | Minimum sustain on brief sounds |
-| `test_extract_starts_at_trim_not_file_start` | Attack index ≥ trim start |
-| `test_parse_note_from_filename` | A4 → 440 Hz |
-| `test_proportional_percentages_sum` | Proportional mode ordering |
+| `test_long_sound_sustain_not_cropped_to_one_second` | 6 s note sustain ≥ 2.8 s |
+| `test_annotate_mode_keeps_energy_sustain` | annotate mode preserves energy boundaries |
 
 ---
 
@@ -603,7 +644,8 @@ Tests synthesize sine bursts with known attack/sustain/decay timing and assert b
 | `NoBackendError` / backend errors | Missing ffmpeg or soundfile backend | Install ffmpeg; use WAV; `pip install soundfile` |
 | No files found | Wrong folder or extension | Check `SUPPORTED_AUDIO_FORMATS`; files must be directly in folder (not nested unless you change code) |
 | Clicks at segment edges | Cut away from zero crossing | Increase **Fade (ms)**; use cosine; manual nudge in review |
-| Sustain too short after processing | Pitch refinement accepted a tight window | Increase **Pitch Stability (¢)** or **Pitch Window**; remove note from filename to disable note-weighted scoring |
+| Sustain too short after processing | Set **Pitch Refine → annotate** or **expand**; use **Very Long** preset for 5–7 s notes |
+| Pitch refinement accepted a tight window | Same as above; check `kept_energy_boundaries` in metadata |
 | All segments similar length | Proportional-only path | Ensure Smart Mode is checked |
 | MP3 load slow/fails | Codec / path | Convert to WAV for batch jobs |
 | GUI frozen during batch | Long CPU work | Normal; wait for progress; do not close window |
@@ -652,4 +694,19 @@ Then clamped so \(t_{\mathrm{dec}} - t_{\mathrm{att}} \geq t_{\mathrm{sustain,mi
 
 ---
 
-*Document generated for SPLIT_audio_segments v3.0. For code changes, update this file alongside `SegmentConfig` defaults and `PRESETS`.*
+## 16. Boundary Benchmark
+
+Evaluate mean boundary error (ms) per detection mode and preset against labeled ground truth.
+
+```bash
+python run_benchmark.py --generate-corpus   # 40 synthetic one-shots + annotations.json
+python run_benchmark.py                     # report → benchmark/results/
+python run_benchmark.py --template my_labels.csv
+python run_benchmark.py --annotations my_labels.csv --audio-dir D:/labeled
+```
+
+Metrics: MAE for `t_att`, `t_dec`, `t_end` (ms); `% within ±50 ms` tolerance. See `benchmark/benchmark_core.py`.
+
+---
+
+*Document for Sound Split ADSR v3.1. Update alongside `SegmentConfig`, `ALL_PRESETS`, and `pitch_refine_mode`.*
